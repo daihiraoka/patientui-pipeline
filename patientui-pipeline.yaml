@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: patientui-pipeline-template
+message: |-
+  patientui Pipeline sample 
+metadata:
+  name: patientui-pipeline
+parameters:
+objects:
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: patientui-pipeline
+  spec:
+    strategy:
+      jenkinsPipelineStrategy:
+        jenkinsfile: |-
+          pipeline {
+            agent { label "nodejs" }
+            environment {
+              version = "1.0"
+              devTag = "${version}-${BUILD_NUMBER}"
+            }
+            stages {
+              stage("Build Image") {
+                steps {
+                  script {
+                    openshift.withCluster() { 
+                       openshift.withProject() { 
+                          def bld = openshift.startBuild('patientui')
+                          bld.untilEach { 
+                            return it.object().status.phase == "Running"
+                          }
+                          bld.logs('-f')
+                       }  
+                    }
+                  }
+                }
+              }
+              stage("Deploy Image") {
+                steps {
+                  script {
+                    openshift.withCluster() { 
+                      openshift.withProject() { 
+                        def dc = openshift.selector('dc', 'patientui')
+                        dc.rollout().latest() 
+                      }
+                    }
+                  }
+                }
+              }
+              stage("Tagging Image Development latest to devTag") {
+                steps {
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject() {
+                        // Tag the patientui:latest image as patientui:${devTag}
+                        openshift.tag("patientui:latest", "patientui:${devTag}")
+                      }
+                    }
+                  }
+                }
+              }
+              stage("Promote Image Development to Testing") {
+                steps {
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject() {
+                        // Tag the patientui:${devTag} image as health-testing/patientui:${devTag}
+                        openshift.tag("patientui:${devTag}", "health-testing/patientui:${devTag}")
+                        openshift.tag("health-testing/patientui:${devTag}", "health-testing/patientui:latest")
+                      }
+                    }
+                  }
+                }
+              }
+              stage("Promote Image Testing to Production") {
+                steps {
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject('health-testing') {
+                        // Tag the patientui:${devTag} image as health-testing/patientui:${devTag}
+                        openshift.tag("patientui:${devTag}", "health-production/patientui:${devTag}")
+                        openshift.tag("health-production/patientui:${devTag}", "health-production/patientui:latest")
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+      type: JenkinsPipeline
+    triggers: []
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: patientui
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: patientui
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: patientui
+  spec:
+    host: 
+    to:
+      kind: Service
+      name: patientui
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: patientui
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: patientui
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: patientui:latest
+    source:
+      contextDir: /site
+      git:
+        uri: https://github.com/daihiraoka/node-s2i-openshift.git
+      type: Git
+    strategy:
+      sourceStrategy:
+        from:
+          kind: ImageStreamTag
+          name: nodejs-10:latest
+          namespace: openshift
+      type: Source
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: patientui
+  spec:
+    template:
+      metadata:
+        labels:
+          name: patientui
+      spec:
+        containers:
+        - name: patientui
+          image: patientui:latest
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+    replicas: 3
+    selector:
+      name: patientui
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: false
+        containerNames:
+        - patientui
+        from:
+          kind: ImageStreamTag
+          name: patientui:latest
