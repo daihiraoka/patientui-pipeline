@@ -30,7 +30,7 @@ objects:
                        openshift.withProject() { 
                           def bld = openshift.startBuild('patientui')
                           bld.untilEach { 
-                            return it.object().status.phase == "Running"
+                            return it.object().status.phase == "Complete"
                           }
                           bld.logs('-f')
                        }  
