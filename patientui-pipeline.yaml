@@ -26,14 +26,14 @@ objects:
               stage("Build Image") {
                 steps {
                   script {
-                    openshift.withCluster() { 
-                       openshift.withProject() { 
+                    openshift.withCluster() {
+                       openshift.withProject() {
                           def bld = openshift.startBuild('patientui')
-                          bld.untilEach { 
+                          bld.untilEach {
                             return it.object().status.phase == "Complete"
                           }
                           bld.logs('-f')
-                       }  
+                       }
                     }
                   }
                 }
@@ -41,10 +41,10 @@ objects:
               stage("Deploy Image") {
                 steps {
                   script {
-                    openshift.withCluster() { 
-                      openshift.withProject() { 
+                    openshift.withCluster() {
+                      openshift.withProject() {
                         def dc = openshift.selector('dc', 'patientui')
-                        dc.rollout().latest() 
+                        dc.rollout().latest()
                       }
                     }
                   }
